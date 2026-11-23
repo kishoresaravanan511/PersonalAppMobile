@@ -1,0 +1,32 @@
+{
+  "project_info": {
+    "project_number": "897070989125",
+    "project_id": "beakai",
+    "storage_bucket": "beakai.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:897070989125:android:8e4890dbbdc832ad98482c",
+        "android_client_info": {
+          "package_name": "com.example.taskschedulerapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyALUQFCinjT9QX_XjX6Flq56eqFAdItmW4"
+        }
+      ],
+      "services": {
+        "realtime_database_service": {
+          "url": "https://beakai-default-rtdb.asia-southeast1.firebasedatabase.app"
+        },
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
