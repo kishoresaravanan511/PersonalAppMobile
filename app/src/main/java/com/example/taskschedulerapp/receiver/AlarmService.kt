@@ -26,10 +26,8 @@ class AlarmService : Service() {
             return START_NOT_STICKY
         }
 
-        // 1. Immediately start foreground with a notification to prevent crash
         startForeground(999, createServiceNotification())
 
-        // 2. Play the sound
         try {
             if (mediaPlayer == null) {
                 mediaPlayer = MediaPlayer.create(this, R.raw.mentalmanadhil)
@@ -52,10 +50,10 @@ class AlarmService : Service() {
     }
 
     private fun createServiceNotification(): Notification {
-        val channelId = "beakai_service_channel"
+        val channelId = "task_service_channel"
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (manager.getNotificationChannel(channelId) == null) {
-            val channel = NotificationChannel(channelId, "Active Alarm", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(channelId, "Task Alarm Service", NotificationManager.IMPORTANCE_LOW)
             manager.createNotificationChannel(channel)
         }
 
@@ -63,11 +61,11 @@ class AlarmService : Service() {
         val stopPendingIntent = PendingIntent.getService(this, 0, stopIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("BeakAI Alarm is Ringing")
-            .setContentText("Motivational sound playing...")
+            .setContentTitle("Task Alert Ringing")
+            .setContentText("Tap to stop the alarm sound.")
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Alarm", stopPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
             .build()
     }
 

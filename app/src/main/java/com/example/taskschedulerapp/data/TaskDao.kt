@@ -46,4 +46,7 @@ interface TaskDao {
 
     @Update
     suspend fun updateDsaPattern(pattern: DsaPattern)
+
+    @Query("DELETE FROM dsa_patterns")
+    suspend fun deleteAllDsaPatterns()
 }

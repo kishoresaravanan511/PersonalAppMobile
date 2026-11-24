@@ -29,13 +29,12 @@ class AlarmScheduler(private val context: Context) {
             }
         }
 
-        // If the calculated time is in the past
+        // Move to the next valid occurrence for repeating tasks or if it's already past for ONCE
         if (calendar.before(now)) {
             if (task.frequency == TaskFrequency.ONCE) {
                 Log.d("AlarmScheduler", "Skipping past ONCE task: ${task.title}")
                 return
             } else {
-                // Move to the next valid occurrence for repeating tasks
                 while (calendar.before(now)) {
                     when (task.frequency) {
                         TaskFrequency.DAILY -> calendar.add(Calendar.DATE, 1)
@@ -47,9 +46,11 @@ class AlarmScheduler(private val context: Context) {
             }
         }
 
+        // 1. Schedule Main Alarm
         val intent = Intent(context, AlarmReceiver::class.java).apply {
             putExtra("TASK_TITLE", task.title)
             putExtra("TASK_ID", task.id)
+            putExtra("IS_REMINDER", false)
         }
         
         val pendingIntent = PendingIntent.getBroadcast(
@@ -62,10 +63,29 @@ class AlarmScheduler(private val context: Context) {
         try {
             val alarmClockInfo = AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent)
             alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
-            Log.d("AlarmScheduler", "Scheduled precise alarm for ${task.title} at ${calendar.time}")
         } catch (e: SecurityException) {
-            Log.e("AlarmScheduler", "Permission issue: ${e.message}")
             alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+        }
+
+        // 2. Schedule 5-minute Pre-Notification Reminder
+        val reminderCalendar = (calendar.clone() as Calendar).apply {
+            add(Calendar.MINUTE, -5)
+        }
+
+        if (reminderCalendar.after(now)) {
+            val reminderIntent = Intent(context, AlarmReceiver::class.java).apply {
+                putExtra("TASK_TITLE", task.title)
+                putExtra("TASK_ID", task.id)
+                putExtra("IS_REMINDER", true)
+            }
+            val reminderPendingIntent = PendingIntent.getBroadcast(
+                context,
+                task.id + 10000, // Unique ID for reminder
+                reminderIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, reminderCalendar.timeInMillis, reminderPendingIntent)
+            Log.d("AlarmScheduler", "Scheduled 5-min reminder for ${task.title} at ${reminderCalendar.time}")
         }
     }
 
@@ -78,5 +98,13 @@ class AlarmScheduler(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager.cancel(pendingIntent)
+
+        val reminderPendingIntent = PendingIntent.getBroadcast(
+            context,
+            task.id + 10000,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        alarmManager.cancel(reminderPendingIntent)
     }
 }

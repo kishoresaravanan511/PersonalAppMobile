@@ -8,16 +8,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 class TaskRepository(private val taskDao: TaskDao, private val context: Context) {
-    // UPDATED for the new BeakAI project in Singapore Region (asia-southeast1)
     private val firebaseUrl = "https://beakai-default-rtdb.asia-southeast1.firebasedatabase.app"
     
     private lateinit var database: DatabaseReference
-    private lateinit var tasksRef: DatabaseReference
-    private lateinit var promptsRef: DatabaseReference
-    private lateinit var dsaRef: DatabaseReference
-    private lateinit var questionsRef: DatabaseReference
+    private var tasksRef: DatabaseReference? = null
+    private var promptsRef: DatabaseReference? = null
+    private var dsaRef: DatabaseReference? = null
+    private var questionsRef: DatabaseReference? = null
     
     private val repositoryScope = CoroutineScope(Dispatchers.IO)
     private val alarmScheduler = AlarmScheduler(context)
@@ -26,142 +26,151 @@ class TaskRepository(private val taskDao: TaskDao, private val context: Context)
     val allQuestions: Flow<List<Question>> = taskDao.getAllQuestions()
     val dsaPatterns: Flow<List<DsaPattern>> = taskDao.getAllDsaPatterns()
 
+    private var currentUserEmail: String? = null
+
     init {
         setupFirebase()
     }
 
     private fun setupFirebase() {
         try {
-            // Using explicit URL to ensure connection to Singapore region
             val dbInstance = FirebaseDatabase.getInstance(firebaseUrl)
-            
             try {
-                // Must be set once before any database reference is created
                 dbInstance.setPersistenceEnabled(true)
-            } catch (e: Exception) {
-                // Already enabled
-            }
-            
+            } catch (e: Exception) {}
             database = dbInstance.reference
-            tasksRef = database.child("tasks")
-            promptsRef = database.child("chat_prompts")
-            dsaRef = database.child("dsa_patterns")
-            questionsRef = database.child("daily_questions")
             
-            // Ensure local nodes stay synced with cloud
-            tasksRef.keepSynced(true)
-            dsaRef.keepSynced(true)
-            questionsRef.keepSynced(true)
+            // Global questions node (common for all users)
+            questionsRef = database.child("daily_questions")
+            questionsRef?.keepSynced(true)
             
             checkConnection()
-            
-            // Connection Handshake: Write to console immediately to confirm write access
-            val handshake = mapOf(
-                "last_online" to ServerValue.TIMESTAMP,
-                "app_version" to "1.0",
-                "region" to "singapore",
-                "project" to "BeakAI"
-            )
-            database.child("connection_status").setValue(handshake)
-                .addOnSuccessListener { Log.d("TaskRepo", "Handshake Success: Data sent to BeakAI Singapore Console") }
-                .addOnFailureListener { e -> Log.e("TaskRepo", "Handshake Failed: ${e.message}") }
-
-            listenToFirebaseChanges()
-            listenToDsaChanges()
             listenToQuestionChanges()
-            
-            // Push existing local data up to Firebase
-            syncLocalDataToFirebase()
-            
         } catch (e: Exception) {
             Log.e("TaskRepo", "Firebase Init Error: ${e.message}")
         }
     }
 
+    /**
+     * Set the current user and initialize user-specific data nodes.
+     * This creates separation of tasks, study, and meetings per user.
+     */
+    fun setUserEmail(email: String) {
+        if (currentUserEmail == email) return
+        currentUserEmail = email
+        val sanitizedEmail = email.replace(".", "_").replace("@", "_")
+        val userRef = database.child("users").child(sanitizedEmail)
+        
+        // Data isolation logic: Each user gets their own tasks/prompts/dsa nodes
+        tasksRef = userRef.child("tasks")
+        promptsRef = userRef.child("chat_prompts")
+        dsaRef = userRef.child("dsa_patterns")
+        
+        tasksRef?.keepSynced(true)
+        dsaRef?.keepSynced(true)
+        
+        listenToFirebaseChanges()
+        listenToDsaChanges()
+        syncLocalDataToFirebase()
+    }
+
+    /**
+     * Custom Registration using Realtime Database (Replaced Firebase Auth)
+     */
+    suspend fun registerUser(email: String, password: String): Result<Unit> {
+        return try {
+            val sanitizedEmail = email.replace(".", "_").replace("@", "_")
+            val userRef = database.child("users").child(sanitizedEmail)
+            
+            val snapshot = userRef.child("profile").get().await()
+            if (snapshot.exists()) {
+                return Result.failure(Exception("User already exists with this BeakAI ID"))
+            }
+            
+            val profile = mapOf("email" to email, "password" to password)
+            userRef.child("profile").setValue(profile).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Custom Authentication using Realtime Database (Manual check)
+     */
+    suspend fun authenticateUser(email: String, password: String): Result<Unit> {
+        return try {
+            val sanitizedEmail = email.replace(".", "_").replace("@", "_")
+            val userRef = database.child("users").child(sanitizedEmail)
+            
+            val snapshot = userRef.child("profile").get().await()
+            if (!snapshot.exists()) {
+                return Result.failure(Exception("Account not found. Please register first."))
+            }
+            
+            val storedPassword = snapshot.child("password").getValue(String::class.java)
+            if (storedPassword == password) {
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception("Incorrect BeakAI password"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private fun syncLocalDataToFirebase() {
+        val tRef = tasksRef ?: return
         repositoryScope.launch {
             try {
                 val localTasks = taskDao.getAllTasksSync()
                 localTasks.forEach { task ->
                     if (task.firebaseId == null) {
-                        val newRef = tasksRef.push()
+                        val newRef = tRef.push()
                         val updatedTask = task.copy(firebaseId = newRef.key)
                         newRef.setValue(updatedTask)
                         taskDao.updateTask(updatedTask)
                     } else {
-                        tasksRef.child(task.firebaseId).setValue(task)
-                    }
-                }
-                
-                val localQuestions = taskDao.getAllQuestionsSync()
-                localQuestions.forEach { q ->
-                    if (q.firebaseId == null) {
-                        val newRef = questionsRef.push()
-                        val updatedQ = q.copy(firebaseId = newRef.key)
-                        newRef.setValue(updatedQ)
-                        taskDao.insertQuestion(updatedQ)
-                    } else {
-                        questionsRef.child(q.firebaseId).setValue(q)
+                        tRef.child(task.firebaseId).setValue(task)
                     }
                 }
             } catch (e: Exception) {
-                Log.e("TaskRepo", "Sync to Cloud Error: ${e.message}")
+                Log.e("TaskRepo", "Sync Error: ${e.message}")
             }
         }
     }
 
     private fun checkConnection() {
-        val connectedRef = FirebaseDatabase.getInstance(firebaseUrl).getReference(".info/connected")
-        connectedRef.addValueEventListener(object : ValueEventListener {
+        database.database.getReference(".info/connected").addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val connected = snapshot.getValue(Boolean::class.java) ?: false
-                if (connected) {
-                    Log.d("TaskRepo", "Connected to BeakAI Singapore Database")
-                } else {
-                    Log.d("TaskRepo", "Disconnected - Checking network...")
-                }
+                Log.d("TaskRepo", if (connected) "Connected" else "Disconnected")
             }
             override fun onCancelled(error: DatabaseError) {}
         })
     }
 
     private fun listenToFirebaseChanges() {
-        tasksRef.addValueEventListener(object : ValueEventListener {
+        val tRef = tasksRef ?: return
+        tRef.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 repositoryScope.launch {
                     try {
-                        val firebaseTasks = mutableListOf<Task>()
                         snapshot.children.forEach { taskSnapshot ->
                             val task = taskSnapshot.getValue(Task::class.java)
                             if (task != null) {
-                                firebaseTasks.add(task.copy(firebaseId = taskSnapshot.key))
-                            }
-                        }
-                        
-                        val localTasks = taskDao.getAllTasksSync()
-                        
-                        firebaseTasks.forEach { firebaseTask ->
-                            val localMatch = localTasks.find { local -> 
-                                local.firebaseId == firebaseTask.firebaseId || 
-                                (local.title == firebaseTask.title && local.hour == firebaseTask.hour && local.minute == firebaseTask.minute)
-                            }
-                            
-                            if (localMatch == null) {
-                                val id = taskDao.insertTask(firebaseTask)
-                                alarmScheduler.scheduleAlarm(firebaseTask.copy(id = id.toInt()))
-                            } else {
-                                val updatedTask = firebaseTask.copy(id = localMatch.id)
-                                if (localMatch.title != updatedTask.title || 
-                                    localMatch.hour != updatedTask.hour || 
-                                    localMatch.minute != updatedTask.minute ||
-                                    localMatch.isCompleted != updatedTask.isCompleted) {
-                                    taskDao.updateTask(updatedTask)
+                                val firebaseTask = task.copy(firebaseId = taskSnapshot.key)
+                                val localTasks = taskDao.getAllTasksSync()
+                                val localMatch = localTasks.find { it.firebaseId == firebaseTask.firebaseId }
+                                if (localMatch == null) {
+                                    val id = taskDao.insertTask(firebaseTask)
+                                    alarmScheduler.scheduleAlarm(firebaseTask.copy(id = id.toInt()))
+                                } else {
+                                    taskDao.updateTask(firebaseTask.copy(id = localMatch.id))
                                 }
                             }
                         }
-                    } catch (e: Exception) {
-                        Log.e("TaskRepo", "Firebase -> Local Sync error: ${e.message}")
-                    }
+                    } catch (e: Exception) {}
                 }
             }
             override fun onCancelled(error: DatabaseError) {}
@@ -169,7 +178,8 @@ class TaskRepository(private val taskDao: TaskDao, private val context: Context)
     }
 
     private fun listenToDsaChanges() {
-        dsaRef.addValueEventListener(object : ValueEventListener {
+        val dRef = dsaRef ?: return
+        dRef.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 repositoryScope.launch {
                     snapshot.children.forEach { dsaSnapshot ->
@@ -185,7 +195,7 @@ class TaskRepository(private val taskDao: TaskDao, private val context: Context)
     }
 
     private fun listenToQuestionChanges() {
-        questionsRef.addValueEventListener(object : ValueEventListener {
+        questionsRef?.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 repositoryScope.launch {
                     try {
@@ -199,9 +209,7 @@ class TaskRepository(private val taskDao: TaskDao, private val context: Context)
                                 }
                             }
                         }
-                    } catch (e: Exception) {
-                        Log.e("TaskRepo", "Question sync error: ${e.message}")
-                    }
+                    } catch (e: Exception) {}
                 }
             }
             override fun onCancelled(error: DatabaseError) {}
@@ -211,73 +219,55 @@ class TaskRepository(private val taskDao: TaskDao, private val context: Context)
     suspend fun insert(task: Task): Long {
         val id = taskDao.insertTask(task)
         val taskWithId = task.copy(id = id.toInt())
-        try {
-            alarmScheduler.scheduleAlarm(taskWithId)
-        } catch (e: Exception) {
-            Log.e("TaskRepo", "Alarm failed")
-        }
-        
-        repositoryScope.launch {
-            val firebaseRef = tasksRef.push()
+        tasksRef?.let {
+            val firebaseRef = it.push()
             val finalTask = taskWithId.copy(firebaseId = firebaseRef.key)
             firebaseRef.setValue(finalTask)
             taskDao.updateTask(finalTask)
         }
+        alarmScheduler.scheduleAlarm(taskWithId)
         return id
     }
 
     suspend fun updateDsaPattern(pattern: DsaPattern) {
         taskDao.updateDsaPattern(pattern)
-        repositoryScope.launch {
-            dsaRef.child(pattern.id).setValue(pattern)
-        }
+        dsaRef?.child(pattern.id)?.setValue(pattern)
     }
 
     suspend fun logChatPrompt(prompt: String, response: String) {
-        repositoryScope.launch {
-            val chatLog = mapOf(
-                "prompt" to prompt,
-                "response" to response,
-                "timestamp" to ServerValue.TIMESTAMP
-            )
-            promptsRef.push().setValue(chatLog)
-        }
+        promptsRef?.push()?.setValue(mapOf(
+            "prompt" to prompt,
+            "response" to response,
+            "timestamp" to ServerValue.TIMESTAMP
+        ))
     }
 
     suspend fun update(task: Task) {
         taskDao.updateTask(task)
-        if (!task.isCompleted) {
-            alarmScheduler.scheduleAlarm(task)
-        } else {
-            alarmScheduler.cancelAlarm(task)
-        }
-        
-        repositoryScope.launch {
-            task.firebaseId?.let {
-                tasksRef.child(it).setValue(task)
-            }
-        }
+        if (!task.isCompleted) alarmScheduler.scheduleAlarm(task)
+        else alarmScheduler.cancelAlarm(task)
+        task.firebaseId?.let { tasksRef?.child(it)?.setValue(task) }
     }
 
     suspend fun delete(task: Task) {
         taskDao.deleteTask(task)
         alarmScheduler.cancelAlarm(task)
-        repositoryScope.launch {
-            task.firebaseId?.let {
-                tasksRef.child(it).removeValue()
-            }
-        }
+        task.firebaseId?.let { tasksRef?.child(it)?.removeValue() }
     }
 
     suspend fun insertQuestion(question: Question) {
         val id = taskDao.insertQuestion(question)
-        repositoryScope.launch {
-            val firebaseRef = questionsRef.push()
-            val finalQuestion = question.copy(id = id.toInt(), firebaseId = firebaseRef.key)
-            firebaseRef.setValue(finalQuestion)
+        questionsRef?.push()?.let {
+            val finalQuestion = question.copy(id = id.toInt(), firebaseId = it.key)
+            it.setValue(finalQuestion)
             taskDao.insertQuestion(finalQuestion)
         }
     }
 
     suspend fun getTaskById(id: Int): Task? = taskDao.getTaskById(id)
+
+    suspend fun clearLocalData() {
+        taskDao.deleteAllTasks()
+        taskDao.deleteAllDsaPatterns()
+    }
 }

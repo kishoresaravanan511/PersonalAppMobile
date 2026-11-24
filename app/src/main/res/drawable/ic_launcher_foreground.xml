@@ -1,9 +1,9 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M35,25 L55,25 C65,25 73,30 73,40 C73,47 68,52 62,54 C69,56 75,62 75,70 C75,81 67,88 55,88 L35,88 Z M47,37 L47,51 L55,51 C60,51 63,48 63,44 C63,40 60,37 55,37 Z M47,60 L47,76 L57,76 C62,76 65,73 65,68 C65,63 62,60 57,60 Z" />
-</vector>
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Centering the applogo.png within the safe area (72dp of 108dp) -->
+    <item
+        android:drawable="@drawable/applogo"
+        android:gravity="center"
+        android:width="72dp"
+        android:height="72dp" />
+</layer-list>

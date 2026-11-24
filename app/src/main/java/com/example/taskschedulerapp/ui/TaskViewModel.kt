@@ -28,6 +28,14 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
     private val _chatMessages = MutableStateFlow<List<Pair<String, Boolean>>>(emptyList())
     val chatMessages: StateFlow<List<Pair<String, Boolean>>> = _chatMessages.asStateFlow()
 
+    suspend fun registerUser(email: String, password: String): Result<Unit> {
+        return repository.registerUser(email, password)
+    }
+
+    suspend fun authenticateUser(email: String, password: String): Result<Unit> {
+        return repository.authenticateUser(email, password)
+    }
+
     fun addTask(
         context: Context,
         title: String,
@@ -70,12 +78,21 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
 
     fun toggleTaskCompletion(task: Task) {
         viewModelScope.launch {
-            repository.update(
-                task.copy(
-                    isCompleted = !task.isCompleted,
-                    lastCompletedTimestamp = System.currentTimeMillis()
-                )
+            val updatedTask = task.copy(
+                isCompleted = !task.isCompleted,
+                lastCompletedTimestamp = System.currentTimeMillis()
             )
+            repository.update(updatedTask)
+        }
+    }
+
+    fun setTaskCompletion(task: Task, completed: Boolean) {
+        viewModelScope.launch {
+            val updatedTask = task.copy(
+                isCompleted = completed,
+                lastCompletedTimestamp = if (completed) System.currentTimeMillis() else task.lastCompletedTimestamp
+            )
+            repository.update(updatedTask)
         }
     }
 
@@ -99,7 +116,7 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
             _chatMessages.value = currentMessages
             
             // Show thinking state placeholder
-            currentMessages.add("Thinking..." to false)
+            currentMessages.add("BeakAI is thinking..." to false)
             _chatMessages.value = currentMessages
             
             val response = geminiService.getTechChatResponse(prompt)

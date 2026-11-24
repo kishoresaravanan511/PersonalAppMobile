@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.taskschedulerapp.MainActivity
@@ -20,34 +22,53 @@ import kotlinx.coroutines.launch
 class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val taskId = intent.getIntExtra("TASK_ID", -1)
-        val taskTitle = intent.getStringExtra("TASK_TITLE") ?: "Job Preparation Task"
+        val taskTitle = intent.getStringExtra("TASK_TITLE") ?: "Scheduled Task"
+        val isReminder = intent.getBooleanExtra("IS_REMINDER", false)
         
-        Log.d("BeakAI_Alarm", "Alarm triggered for: $taskTitle")
+        Log.d("TaskApp_Alarm", "Alarm triggered for: $taskTitle, Reminder: $isReminder")
 
-        // 1. Start Alarm Service to play the motivational sound
-        val serviceIntent = Intent(context, AlarmService::class.java)
-        context.startForegroundService(serviceIntent)
-
-        // 2. Show High-Priority Heads-up Notification (Popup)
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val channelId = "beakai_urgent_channel"
+        val channelId = if (isReminder) "task_reminder_channel" else "task_alarm_channel"
         
         if (notificationManager.getNotificationChannel(channelId) == null) {
-            val channel = NotificationChannel(
-                channelId,
-                "BeakAI Alarms",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
+            val importance = if (isReminder) NotificationManager.IMPORTANCE_DEFAULT else NotificationManager.IMPORTANCE_HIGH
+            val name = if (isReminder) "Task Reminders" else "Task Alarms"
+            val channel = NotificationChannel(channelId, name, importance).apply {
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 enableVibration(true)
-                setSound(null, null) 
-                setShowBadge(true)
-                // This is crucial for the "Popup" behavior (Heads-up notification)
-                enableLights(true)
+                if (!isReminder) {
+                    setSound(null, null) 
+                    enableLights(true)
+                }
             }
             notificationManager.createNotificationChannel(channel)
         }
+
+        if (isReminder) {
+            // Show a simple reminder notification 5 minutes before
+            val contentMessage = "Upcoming: '$taskTitle' starts in 5 minutes."
+            val notification = NotificationCompat.Builder(context, channelId)
+                .setContentTitle("Task Starting Soon")
+                .setContentText(contentMessage)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .build()
+            notificationManager.notify(taskId + 10000, notification)
+            
+            // Allow a short vibration for reminder
+            val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
+            return
+        }
+
+        // --- Handle Main Alarm ---
         
+        // 1. Start Alarm Service to play the sound
+        val serviceIntent = Intent(context, AlarmService::class.java)
+        context.startForegroundService(serviceIntent)
+
+        // 2. Show High-Priority Heads-up Notification
         val stopIntent = Intent(context, AlarmService::class.java).apply {
             action = "STOP_ALARM"
         }
@@ -64,20 +85,20 @@ class AlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // SPECIFIC MESSAGE REQUESTED BY USER
-        val contentMessage = "It's time for your scheduled goal: $taskTitle. Stay focused and complete this task to stay on track!"
+        val contentMessage = "Time for: $taskTitle"
 
         val notification = NotificationCompat.Builder(context, channelId)
-            .setContentTitle("BeakAI Focus Alert!")
+            .setContentTitle("Task Alert")
             .setContentText(contentMessage)
             .setStyle(NotificationCompat.BigTextStyle().bigText(contentMessage))
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setFullScreenIntent(pendingIntent, true) // Makes it pop up over other apps
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Alarm", stopPendingIntent)
+            .setFullScreenIntent(pendingIntent, true)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
             .setAutoCancel(true)
             .setOngoing(true)
+            .setVibrate(longArrayOf(0, 500, 500, 500))
             .build()
             
         notificationManager.notify(taskId, notification)
