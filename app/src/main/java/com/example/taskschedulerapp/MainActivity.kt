@@ -7,9 +7,9 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricPrompt
 import androidx.compose.runtime.*
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -27,10 +27,6 @@ import java.util.concurrent.Executor
 
 class MainActivity : FragmentActivity() {
 
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { _ -> }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
@@ -40,13 +36,24 @@ class MainActivity : FragmentActivity() {
         val factory = TaskViewModelFactory(repository)
         
         DailyQuestionReceiver.scheduleDailyNotification(applicationContext)
-        askNotificationPermission()
         
         enableEdgeToEdge()
         setContent {
             var isDarkTheme by remember { mutableStateOf(sessionManager.isDarkTheme()) }
             var currentUserEmail by remember { mutableStateOf(sessionManager.getUserEmail()) }
             val scope = rememberCoroutineScope()
+
+            // Safe permission request after UI is initialized
+            LaunchedEffect(Unit) {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        // Using ActivityCompat directly with a safe request code (101) to avoid the 16-bit limit crash
+                        ActivityCompat.requestPermissions(this@MainActivity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
+                    }
+                }
+            }
 
             TaskSchedulerAppTheme(darkTheme = isDarkTheme) {
                 val viewModel: TaskViewModel = viewModel(factory = factory)
@@ -92,13 +99,22 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 101) {
+            if (grantResults.isNotEmpty() && grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                Toast.makeText(this, "Notifications are disabled. Task alerts won't work.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun showBiometricPrompt(onSuccess: () -> Unit) {
         val executor: Executor = ContextCompat.getMainExecutor(this)
         val biometricPrompt = BiometricPrompt(this, executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     super.onAuthenticationError(errorCode, errString)
-                    Toast.makeText(applicationContext, "Authentication error: $errString", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(applicationContext, "Auth Error: $errString", Toast.LENGTH_SHORT).show()
                 }
 
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
@@ -120,15 +136,5 @@ class MainActivity : FragmentActivity() {
             .build()
 
         biometricPrompt.authenticate(promptInfo)
-    }
-
-    private fun askNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
     }
 }

@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import com.example.taskschedulerapp.data.Task
 import com.example.taskschedulerapp.data.TaskFrequency
@@ -17,24 +18,34 @@ class AlarmScheduler(private val context: Context) {
 
         val now = Calendar.getInstance()
         val calendar = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, task.hour)
-            set(Calendar.MINUTE, task.minute)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
+            if (task.scheduledTimestamp > 0) {
+                timeInMillis = task.scheduledTimestamp
+            } else {
+                set(Calendar.HOUR_OF_DAY, task.hour)
+                set(Calendar.MINUTE, task.minute)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
 
-            when (task.frequency) {
-                TaskFrequency.WEEKLY -> task.dayOfWeek?.let { set(Calendar.DAY_OF_WEEK, it) }
-                TaskFrequency.MONTHLY -> task.dayOfMonth?.let { set(Calendar.DAY_OF_MONTH, it) }
-                else -> {}
+                when (task.frequency) {
+                    TaskFrequency.ONCE -> {
+                        task.year?.let { set(Calendar.YEAR, it) }
+                        task.month?.let { set(Calendar.MONTH, it) }
+                        task.dayOfMonth?.let { set(Calendar.DAY_OF_MONTH, it) }
+                    }
+                    TaskFrequency.WEEKLY -> task.dayOfWeek?.let { set(Calendar.DAY_OF_WEEK, it) }
+                    TaskFrequency.MONTHLY -> task.dayOfMonth?.let { set(Calendar.DAY_OF_MONTH, it) }
+                    else -> {}
+                }
             }
         }
 
-        // Move to the next valid occurrence for repeating tasks or if it's already past for ONCE
+        // Move to the next valid occurrence for repeating tasks
         if (calendar.before(now)) {
             if (task.frequency == TaskFrequency.ONCE) {
                 Log.d("AlarmScheduler", "Skipping past ONCE task: ${task.title}")
                 return
             } else {
+                // For repeating tasks, find the next occurrence in the future
                 while (calendar.before(now)) {
                     when (task.frequency) {
                         TaskFrequency.DAILY -> calendar.add(Calendar.DATE, 1)
@@ -46,11 +57,10 @@ class AlarmScheduler(private val context: Context) {
             }
         }
 
-        // 1. Schedule Main Alarm
         val intent = Intent(context, AlarmReceiver::class.java).apply {
             putExtra("TASK_TITLE", task.title)
             putExtra("TASK_ID", task.id)
-            putExtra("IS_REMINDER", false)
+            putExtra("USER_EMAIL", task.userEmail)
         }
         
         val pendingIntent = PendingIntent.getBroadcast(
@@ -61,31 +71,27 @@ class AlarmScheduler(private val context: Context) {
         )
 
         try {
-            val alarmClockInfo = AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent)
-            alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
-        } catch (e: SecurityException) {
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
-        }
-
-        // 2. Schedule 5-minute Pre-Notification Reminder
-        val reminderCalendar = (calendar.clone() as Calendar).apply {
-            add(Calendar.MINUTE, -5)
-        }
-
-        if (reminderCalendar.after(now)) {
-            val reminderIntent = Intent(context, AlarmReceiver::class.java).apply {
-                putExtra("TASK_TITLE", task.title)
-                putExtra("TASK_ID", task.id)
-                putExtra("IS_REMINDER", true)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (alarmManager.canScheduleExactAlarms()) {
+                    val alarmClockInfo = AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent)
+                    alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+                    Log.d("AlarmScheduler", "Scheduled Accurate Alarm for ${task.title}")
+                } else {
+                    // Fallback to inexact alarm if permission not granted
+                    alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+                    Log.d("AlarmScheduler", "Scheduled Inexact Alarm (No Permission) for ${task.title}")
+                }
+            } else {
+                val alarmClockInfo = AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent)
+                alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
             }
-            val reminderPendingIntent = PendingIntent.getBroadcast(
-                context,
-                task.id + 10000, // Unique ID for reminder
-                reminderIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, reminderCalendar.timeInMillis, reminderPendingIntent)
-            Log.d("AlarmScheduler", "Scheduled 5-min reminder for ${task.title} at ${reminderCalendar.time}")
+        } catch (e: Exception) {
+            // Ultimate fallback
+            try {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
+            } catch (e2: Exception) {
+                Log.e("AlarmScheduler", "Failed to schedule alarm: ${e2.message}")
+            }
         }
     }
 
@@ -98,13 +104,6 @@ class AlarmScheduler(private val context: Context) {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager.cancel(pendingIntent)
-
-        val reminderPendingIntent = PendingIntent.getBroadcast(
-            context,
-            task.id + 10000,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        alarmManager.cancel(reminderPendingIntent)
+        Log.d("AlarmScheduler", "Cancelled Alarm for ${task.title}")
     }
 }

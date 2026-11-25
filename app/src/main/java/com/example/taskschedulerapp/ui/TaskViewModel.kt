@@ -45,8 +45,11 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
         category: TaskCategory,
         hour: Int,
         minute: Int,
+        dayOfMonth: Int? = null,
         dayOfWeek: Int? = null,
-        dayOfMonth: Int? = null
+        month: Int? = null,
+        year: Int? = null,
+        scheduledTimestamp: Long = 0L
     ) {
         viewModelScope.launch {
             val task = Task(
@@ -57,42 +60,34 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
                 category = category,
                 hour = hour,
                 minute = minute,
+                dayOfMonth = dayOfMonth,
                 dayOfWeek = dayOfWeek,
-                dayOfMonth = dayOfMonth
+                month = month,
+                year = year,
+                scheduledTimestamp = scheduledTimestamp,
+                lastUpdated = System.currentTimeMillis(),
+                status = TaskStatus.ACTIVE
             )
             repository.insert(task)
         }
     }
 
-    fun updateTask(task: Task) {
+    fun setTaskCompletion(task: Task, completed: Boolean) {
         viewModelScope.launch {
-            repository.update(task)
+            val now = System.currentTimeMillis()
+            val updatedTask = task.copy(
+                isCompleted = completed,
+                status = if (completed) TaskStatus.ACHIEVED else TaskStatus.ACTIVE,
+                lastCompletedTimestamp = if (completed) now else task.lastCompletedTimestamp,
+                lastUpdated = now
+            )
+            repository.update(updatedTask)
         }
     }
 
     fun deleteTask(context: Context, task: Task) {
         viewModelScope.launch {
             repository.delete(task)
-        }
-    }
-
-    fun toggleTaskCompletion(task: Task) {
-        viewModelScope.launch {
-            val updatedTask = task.copy(
-                isCompleted = !task.isCompleted,
-                lastCompletedTimestamp = System.currentTimeMillis()
-            )
-            repository.update(updatedTask)
-        }
-    }
-
-    fun setTaskCompletion(task: Task, completed: Boolean) {
-        viewModelScope.launch {
-            val updatedTask = task.copy(
-                isCompleted = completed,
-                lastCompletedTimestamp = if (completed) System.currentTimeMillis() else task.lastCompletedTimestamp
-            )
-            repository.update(updatedTask)
         }
     }
 
@@ -115,17 +110,10 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
             currentMessages.add(prompt to true)
             _chatMessages.value = currentMessages
             
-            // Show thinking state placeholder
-            currentMessages.add("BeakAI is thinking..." to false)
-            _chatMessages.value = currentMessages
-            
             val response = geminiService.getTechChatResponse(prompt)
-            
-            // Log to Firebase for real-time monitoring
             repository.logChatPrompt(prompt, response)
             
             val updatedMessages = _chatMessages.value.toMutableList()
-            if (updatedMessages.isNotEmpty()) updatedMessages.removeAt(updatedMessages.size - 1)
             updatedMessages.add(response to false)
             _chatMessages.value = updatedMessages
         }

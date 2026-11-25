@@ -13,24 +13,34 @@ class GeminiService {
      */
     private val apiKey = "".trim()
     
-    private val model = GenerativeModel(
-        modelName = "gemini-1.5-flash",
-        apiKey = apiKey
-    )
+    private var model: GenerativeModel? = null
+
+    init {
+        try {
+            if (apiKey.isNotBlank()) {
+                model = GenerativeModel(
+                    modelName = "gemini-1.5-flash",
+                    apiKey = apiKey
+                )
+            }
+        } catch (e: Exception) {
+            Log.e("GeminiService", "Failed to initialize GenerativeModel: ${e.message}")
+        }
+    }
 
     private fun isKeyValid(): Boolean {
-        // Return true as long as the key is not blank.
-        return apiKey.isNotBlank()
+        return apiKey.isNotBlank() && model != null
     }
 
     suspend fun getDailyInterviewQuestion(): String {
-        if (!isKeyValid()) {
-            return "BeakAI Info: API Key missing. Please configure your key in GeminiService.kt."
+        val currentModel = model
+        if (!isKeyValid() || currentModel == null) {
+            return "BeakAI Info: API Key missing or invalid. Please configure your key in GeminiService.kt."
         }
         
         val prompt = "Provide one Java Spring Boot developer interview question and its concise answer for a fresher."
         return try {
-            val response = model.generateContent(prompt)
+            val response = currentModel.generateContent(prompt)
             response.text ?: "BeakAI was unable to generate a question. Please check back later."
         } catch (e: Exception) {
             Log.e("GeminiService", "Question Fetch Error: ${e.message}", e)
@@ -39,12 +49,13 @@ class GeminiService {
     }
 
     suspend fun getTechChatResponse(userPrompt: String): String {
-        if (!isKeyValid()) {
+        val currentModel = model
+        if (!isKeyValid() || currentModel == null) {
             return "BeakAI Chat: Please add your authenticated Google API key in GeminiService.kt."
         }
 
         return try {
-            val response = model.generateContent("You are BeakAI, a technical mentor. Answer this technical query: $userPrompt")
+            val response = currentModel.generateContent("You are BeakAI, a technical mentor. Answer this technical query: $userPrompt")
             val responseText = response.text
             if (responseText.isNullOrBlank()) {
                 "BeakAI is listening. Please ask your technical question again."

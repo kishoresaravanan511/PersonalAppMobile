@@ -1,5 +1,7 @@
 package com.example.taskschedulerapp.ui
 
+import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -39,7 +42,29 @@ fun LoginScreen(
     var isSignUp by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
+    var showExitConfirm by remember { mutableStateOf(false) }
+    
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    // Protection against accidental exit
+    BackHandler(enabled = true) {
+        showExitConfirm = true
+    }
+
+    if (showExitConfirm) {
+        AlertDialog(
+            onDismissRequest = { showExitConfirm = false },
+            title = { Text("Exit BeakAI") },
+            text = { Text("Do you want to close the application?") },
+            confirmButton = { 
+                Button(onClick = { (context as? Activity)?.finish() }) { Text("Exit") } 
+            },
+            dismissButton = { 
+                TextButton(onClick = { showExitConfirm = false }) { Text("Cancel") } 
+            }
+        )
+    }
 
     // Fingerprint is only enabled for admin email
     val isFingerprintEnabled = email.lowercase() == AdminConfig.ADMIN_EMAIL
@@ -84,7 +109,7 @@ fun LoginScreen(
                 value = email,
                 onValueChange = { email = it },
                 label = { Text("Email ID", color = Color.Gray) },
-                placeholder = { Text("user@beakAI.app") },
+                placeholder = { Text("user@beakai.app") },
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Email, null, tint = Color.White) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
@@ -155,8 +180,20 @@ fun LoginScreen(
                     scope.launch {
                         if (email.lowercase() == AdminConfig.ADMIN_EMAIL) {
                             if (password == AdminConfig.getAdminPassword()) {
+                                // Important: Authenticate admin with Firebase Auth to enable sync
+                                val authResult = viewModel.authenticateUser(email.lowercase(), password)
                                 isLoading = false
-                                onLoginSuccess(email.lowercase())
+                                if (authResult.isSuccess) {
+                                    onLoginSuccess(email.lowercase())
+                                } else {
+                                    // If owner account isn't in Auth yet, try to register it once
+                                    val regResult = viewModel.registerUser(email.lowercase(), password)
+                                    if (regResult.isSuccess) {
+                                        onLoginSuccess(email.lowercase())
+                                    } else {
+                                        errorMessage = "Admin Sync Auth Failed. Check Firebase permissions."
+                                    }
+                                }
                             } else {
                                 errorMessage = "Invalid Password"
                                 isLoading = false
