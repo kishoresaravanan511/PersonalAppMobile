@@ -25,6 +25,7 @@ data class Task(
     val userEmail: String = "",
     val title: String = "",
     val description: String = "",
+    val aiAssistance: String = "",
     val priority: Int = 1, // 1: Low, 2: Medium, 3: High
     val frequency: TaskFrequency = TaskFrequency.DAILY,
     val category: TaskCategory = TaskCategory.TASK,

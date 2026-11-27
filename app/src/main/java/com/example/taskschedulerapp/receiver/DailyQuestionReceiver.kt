@@ -27,7 +27,8 @@ class DailyQuestionReceiver : BroadcastReceiver() {
         if (apiKey.isBlank()) return
 
         CoroutineScope(Dispatchers.IO).launch {
-            val questionAndAnswer = geminiService.getDailyInterviewQuestion(apiKey)
+            val modelName = sessionManager.getGeminiModelName() ?: "gemini-2.0-flash"
+            val questionAndAnswer = geminiService.getDailyInterviewQuestion(apiKey, modelName)
             
             if (questionAndAnswer.startsWith("BeakAI Info:")) return@launch
 

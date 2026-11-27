@@ -65,6 +65,7 @@ fun TaskScreen(
     
     var showDialog by remember { mutableStateOf(false) }
     var selectedCategory by remember { mutableStateOf<TaskCategory?>(TaskCategory.TASK) }
+    var scheduleCategory by remember { mutableStateOf(TaskCategory.TASK) }
     var showQuestionsHistory by remember { mutableStateOf(false) }
     var showChatbot by remember { mutableStateOf(false) }
     var selectedTabIndex by remember { mutableIntStateOf(0) }
@@ -131,9 +132,9 @@ fun TaskScreen(
         }
     }
 
-    val filteredSortedTasks = remember(updatedTasks, selectedTabIndex) {
+    val filteredSortedTasks = remember(updatedTasks, selectedTabIndex, scheduleCategory) {
         val freq = TaskFrequency.entries[selectedTabIndex]
-        updatedTasks.filter { it.frequency == freq }.sortedWith(
+        updatedTasks.filter { it.frequency == freq && it.category == scheduleCategory }.sortedWith(
             compareBy<Task> { 
                 when(it.status) {
                     TaskStatus.ACHIEVED -> 0
@@ -219,6 +220,13 @@ fun TaskScreen(
                     },
                     navigationIcon = { IconButton(onClick = { scope.launch { drawerState.open() } }) { Icon(Icons.Default.Menu, null) } },
                     actions = {
+                        IconButton(onClick = {
+                            showChatbot = true
+                            showQuestionsHistory = false
+                            selectedCategory = null
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.Chat, "AI Assistant")
+                        }
                         IconButton(onClick = { onThemeToggle() }) { Icon(if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode, null) }
                     },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
@@ -228,27 +236,17 @@ fun TaskScreen(
                 )
             },
             floatingActionButton = {
-                // BUG FIX: Hide FABs when chatbot is open to ensure send button visibility
-                if (!showChatbot) {
-                    Column(horizontalAlignment = Alignment.End) {
-                        FloatingActionButton(
-                            onClick = { showChatbot = true; showQuestionsHistory = false; selectedCategory = null },
-                            containerColor = Color(0xFF00BFA5),
-                            contentColor = Color.White,
-                            shape = CircleShape,
-                            modifier = Modifier.padding(bottom = 16.dp).size(56.dp)
-                        ) {
-                            Icon(Icons.Default.Face, "AI Assistant")
-                        }
-                        FloatingActionButton(
-                            onClick = { showDialog = true },
-                            containerColor = Color(0xFFFF9800),
-                            contentColor = Color.White,
-                            shape = CircleShape,
-                            modifier = Modifier.size(64.dp)
-                        ) {
-                            Icon(Icons.Default.Add, "Add Task", modifier = Modifier.size(32.dp))
-                        }
+                val onSchedule = !showChatbot && !showQuestionsHistory &&
+                    selectedCategory != TaskCategory.DSA && selectedCategory != TaskCategory.SYSTEM_DESIGN
+                if (onSchedule) {
+                    FloatingActionButton(
+                        onClick = { showDialog = true },
+                        containerColor = Color(0xFFFF9800),
+                        contentColor = Color.White,
+                        shape = CircleShape,
+                        modifier = Modifier.navigationBarsPadding().size(64.dp)
+                    ) {
+                        Icon(Icons.Default.Add, "Add Task", modifier = Modifier.size(32.dp))
                     }
                 }
             }
@@ -270,6 +268,29 @@ fun TaskScreen(
                                     text = { Text(title, fontSize = 14.sp, fontWeight = if(selectedTabIndex == index) FontWeight.Bold else FontWeight.Normal) },
                                     selectedContentColor = Color(0xFFFF9800),
                                     unselectedContentColor = Color.Gray
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                TaskCategory.TASK to "Tasks",
+                                TaskCategory.STUDY to "Study",
+                                TaskCategory.MEETING to "Meetings"
+                            ).forEach { (category, label) ->
+                                FilterChip(
+                                    selected = scheduleCategory == category,
+                                    onClick = { scheduleCategory = category },
+                                    label = { Text(label) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = Color(0xFFFF9800),
+                                        selectedLabelColor = Color.White
+                                    )
                                 )
                             }
                         }
@@ -295,7 +316,7 @@ fun TaskScreen(
                             } else {
                                 LazyColumn(
                                     modifier = Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(16.dp),
+                                    contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
                                     verticalArrangement = Arrangement.spacedBy(16.dp)
                                 ) {
                                     items(filteredSortedTasks, key = { it.id }) { task ->
@@ -320,10 +341,11 @@ fun TaskScreen(
     if (showDialog) {
         AddTaskDialog(
             onDismiss = { showDialog = false },
-            onConfirm = { name, desc, h, m, freq, cat, d, mo, y, dow ->
+            onConfirm = { name, desc, assistance, h, m, freq, cat, d, mo, y, dow ->
                 viewModel.addTask(
                     title = name,
                     description = desc,
+                    aiAssistance = assistance,
                     priority = 1,
                     frequency = freq,
                     category = cat,
@@ -336,7 +358,10 @@ fun TaskScreen(
                 )
                 showDialog = false
             },
-            initialCategory = selectedCategory ?: TaskCategory.TASK
+            initialCategory = scheduleCategory,
+            onRequestAssistance = { name, description, onResult ->
+                viewModel.requestTaskAssistance(name, description, onResult)
+            }
         )
     }
 
@@ -344,7 +369,18 @@ fun TaskScreen(
         AlertDialog(
             onDismissRequest = { showLogoutConfirm = false },
             title = { Text("Logout") },
-            text = { Text("Are you sure you want to logout?") },
+            text = {
+                Column {
+                    Text("Current mail ID")
+                    Text(
+                        text = userEmail ?: "Not signed in",
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFF9800)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("Are you sure you want to logout?")
+                }
+            },
             confirmButton = { TextButton(onClick = { onLogout(); showLogoutConfirm = false }) { Text("Logout", color = Color.Red) } },
             dismissButton = { TextButton(onClick = { showLogoutConfirm = false }) { Text("Cancel") } }
         )
@@ -366,6 +402,12 @@ fun TaskItem(task: Task, currentTime: Long, onDelete: (Task) -> Unit, onToggleCo
     val remainingMillis = task.scheduledTimestamp - currentTime
     val isExpired = task.status == TaskStatus.EXPIRED
     val isAchieved = task.status == TaskStatus.ACHIEVED
+    val isActive = task.status == TaskStatus.ACTIVE
+    val statusColor = when {
+        isAchieved -> Color(0xFF2E7D32)
+        isExpired -> Color(0xFFC62828)
+        else -> MaterialTheme.colorScheme.onSurface
+    }
     
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -392,33 +434,36 @@ fun TaskItem(task: Task, currentTime: Long, onDelete: (Task) -> Unit, onToggleCo
             .shadow(animatedElevation, RoundedCornerShape(20.dp)),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = when {
-                isAchieved -> Color(0xFF2E7D32) // FULL GREEN
-                isExpired -> Color(0xFFC62828)  // FULL RED
-                else -> Color(0xFF1565C0)       // FULL BLUE (ACTIVE)
-            },
-            contentColor = Color.White
+            containerColor = MaterialTheme.colorScheme.surface
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = animatedElevation),
-        border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.3f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             modifier = Modifier.padding(20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Checkbox(
-                checked = isAchieved,
-                onCheckedChange = { onToggleCompletion(it) },
-                colors = CheckboxDefaults.colors(
-                    checkedColor = Color.White,
-                    uncheckedColor = Color.White.copy(alpha = 0.6f),
-                    checkmarkColor = when {
-                        isAchieved -> Color(0xFF2E7D32)
-                        isExpired -> Color(0xFFC62828)
-                        else -> Color(0xFF1565C0)
-                    }
+            if (isExpired) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "Expired",
+                    tint = Color(0xFFC62828),
+                    modifier = Modifier.size(28.dp)
                 )
-            )
+            } else {
+                Checkbox(
+                    checked = isAchieved,
+                    onCheckedChange = { if (isActive) onToggleCompletion(it) },
+                    enabled = isActive,
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = Color(0xFF2E7D32),
+                        uncheckedColor = MaterialTheme.colorScheme.onSurface,
+                        checkmarkColor = Color.White,
+                        disabledCheckedColor = Color(0xFF2E7D32),
+                        disabledUncheckedColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                    )
+                )
+            }
             
             Spacer(Modifier.width(12.dp))
 
@@ -427,59 +472,62 @@ fun TaskItem(task: Task, currentTime: Long, onDelete: (Task) -> Unit, onToggleCo
                     text = task.title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    textDecoration = if (isAchieved) TextDecoration.LineThrough else null,
+                    color = statusColor,
+                    textDecoration = if (isActive) null else TextDecoration.LineThrough,
                 )
                 if (task.description.isNotBlank()) {
                     Text(
                         text = task.description,
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.8f),
+                        color = statusColor,
+                        textDecoration = if (isActive) null else TextDecoration.LineThrough,
+                        maxLines = 2
+                    )
+                }
+                if (task.aiAssistance.isNotBlank()) {
+                    Text(
+                        text = "AI: ${task.aiAssistance}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = statusColor,
+                        textDecoration = if (isActive) null else TextDecoration.LineThrough,
                         maxLines = 2
                     )
                 }
                 Spacer(Modifier.height(4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.AccessTime, null, modifier = Modifier.size(16.dp), tint = Color.White.copy(alpha = 0.8f))
+                    Icon(Icons.Default.AccessTime, null, modifier = Modifier.size(16.dp), tint = statusColor)
                     Spacer(Modifier.width(6.dp))
                     Text(
                         text = formatTimeWithAmPm(task.hour, task.minute),
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.8f),
-                        fontWeight = FontWeight.Medium
+                        color = statusColor,
+                        fontWeight = FontWeight.Medium,
+                        textDecoration = if (isActive) null else TextDecoration.LineThrough
                     )
                 }
             }
 
             Column(horizontalAlignment = Alignment.End) {
-                if (!isAchieved && !isExpired) {
-                    Text("REMAINING", fontSize = 10.sp, color = Color.White.copy(alpha = 0.7f), fontWeight = FontWeight.Black)
+                if (isActive) {
+                    Text("REMAINING", fontSize = 10.sp, color = Color.Gray, fontWeight = FontWeight.Black)
                     Text(
                         formatCountdown(remainingMillis),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 } else if (isAchieved) {
-                    Surface(
-                        color = Color.White.copy(alpha = 0.2f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("ACHIEVED", fontWeight = FontWeight.Black, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-                    }
+                    Text("ACHIEVED", fontWeight = FontWeight.Black, fontSize = 11.sp, color = Color(0xFF2E7D32))
                 } else {
-                    Surface(
-                        color = Color.White.copy(alpha = 0.2f),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("EXPIRED", fontWeight = FontWeight.Black, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-                    }
+                    Text("EXPIRED", fontWeight = FontWeight.Black, fontSize = 11.sp, color = Color(0xFFC62828))
                 }
             }
             
-            Spacer(Modifier.width(12.dp))
-            
-            IconButton(onClick = { onDelete(task) }) { 
-                Icon(Icons.Default.Delete, "Delete", tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(20.dp)) 
+            if (isActive) {
+                Spacer(Modifier.width(12.dp))
+                IconButton(onClick = { onDelete(task) }) {
+                    Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))
+                }
             }
         }
     }
@@ -506,15 +554,23 @@ fun formatCountdown(millis: Long): String {
 @Composable
 fun AddTaskDialog(
     onDismiss: () -> Unit,
-    onConfirm: (String, String, Int, Int, TaskFrequency, TaskCategory, Int?, Int?, Int?, Int?) -> Unit,
-    initialCategory: TaskCategory
+    onConfirm: (String, String, String, Int, Int, TaskFrequency, TaskCategory, Int?, Int?, Int?, Int?) -> Unit,
+    initialCategory: TaskCategory,
+    onRequestAssistance: (String, String, (String) -> Unit) -> Unit
 ) {
     var taskName by remember { mutableStateOf("") }
     var taskDescription by remember { mutableStateOf("") }
+    var aiAssistance by remember { mutableStateOf("") }
+    var aiLoading by remember { mutableStateOf(false) }
     var hour by remember { mutableIntStateOf(Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) }
     var minute by remember { mutableIntStateOf(Calendar.getInstance().get(Calendar.MINUTE)) }
     var frequency by remember { mutableStateOf(TaskFrequency.DAILY) }
-    var category by remember { mutableStateOf(initialCategory) }
+    var category by remember {
+        mutableStateOf(
+            if (initialCategory == TaskCategory.STUDY || initialCategory == TaskCategory.MEETING) initialCategory
+            else TaskCategory.TASK
+        )
+    }
     
     var selectedDate by remember { mutableStateOf(Calendar.getInstance()) }
     var showTimePicker by remember { mutableStateOf(false) }
@@ -575,6 +631,58 @@ fun AddTaskDialog(
                     shape = RoundedCornerShape(12.dp),
                     minLines = 2
                 )
+
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = {
+                        aiLoading = true
+                        onRequestAssistance(taskName, taskDescription) { result ->
+                            aiAssistance = result
+                            aiLoading = false
+                        }
+                    },
+                    enabled = taskName.isNotBlank() && taskDescription.isNotBlank() && !aiLoading,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00BFA5)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(if (aiLoading) "Getting assistance..." else "AI Assistance", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = aiAssistance,
+                    onValueChange = { aiAssistance = it },
+                    label = { Text("AI Assistance") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    minLines = 2
+                )
+
+                Spacer(Modifier.height(16.dp))
+                Text("Category", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(
+                        TaskCategory.TASK to "Tasks",
+                        TaskCategory.STUDY to "Study",
+                        TaskCategory.MEETING to "Meetings"
+                    ).forEach { (cat, label) ->
+                        val selected = category == cat
+                        Surface(
+                            modifier = Modifier.weight(1f).clickable { category = cat },
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, if (selected) Color.Transparent else Color.Gray),
+                            color = if (selected) Color(0xFFFF9800) else Color.Transparent
+                        ) {
+                            Text(
+                                label,
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                textAlign = TextAlign.Center,
+                                color = if (selected) Color.White else Color.Gray,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
                 
                 Spacer(Modifier.height(16.dp))
                 val datePickerState = rememberDatePickerState(initialSelectedDateMillis = selectedDate.timeInMillis)
@@ -628,29 +736,39 @@ fun AddTaskDialog(
                     }
                 }
                 
-                Spacer(Modifier.height(24.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                        Text("Cancel", color = Color(0xFFFF9800), fontWeight = FontWeight.Bold)
-                    }
-                    Button(
-                        onClick = { 
-                            if (taskName.isNotBlank() && taskDescription.isNotBlank()) {
-                                onConfirm(taskName, taskDescription, hour, minute, frequency, category, selectedDate.get(Calendar.DAY_OF_MONTH), selectedDate.get(Calendar.MONTH), selectedDate.get(Calendar.YEAR), selectedDate.get(Calendar.DAY_OF_WEEK))
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = if(taskName.isNotBlank() && taskDescription.isNotBlank()) Color(0xFF3F3F46) else Color.Gray),
-                        shape = RoundedCornerShape(24.dp),
-                        enabled = taskName.isNotBlank() && taskDescription.isNotBlank()
-                    ) {
-                        Text("Finalize Task", color = Color.LightGray)
-                    }
-                }
             }
         },
-        confirmButton = {},
-        dismissButton = {}
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (taskName.isNotBlank() && taskDescription.isNotBlank()) {
+                        onConfirm(
+                            taskName,
+                            taskDescription,
+                            aiAssistance,
+                            hour,
+                            minute,
+                            frequency,
+                            category,
+                            selectedDate.get(Calendar.DAY_OF_MONTH),
+                            selectedDate.get(Calendar.MONTH),
+                            selectedDate.get(Calendar.YEAR),
+                            selectedDate.get(Calendar.DAY_OF_WEEK)
+                        )
+                    }
+                },
+                enabled = taskName.isNotBlank() && taskDescription.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
+                shape = RoundedCornerShape(24.dp)
+            ) {
+                Text("Finalize Task", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = Color(0xFFFF9800), fontWeight = FontWeight.Bold)
+            }
+        }
     )
 }
 
@@ -679,9 +797,11 @@ fun QuestionsHistoryView(questions: List<Question>) {
 @Composable
 fun GeminiChatScreen(vm: TaskViewModel, msgs: List<Pair<String, Boolean>>) {
     val apiKey by vm.geminiApiKey.collectAsState()
+    val modelName by vm.geminiModelName.collectAsState()
     var text by remember { mutableStateOf("") }
     var showKeyDialog by remember { mutableStateOf(false) }
     var tempKey by remember { mutableStateOf(apiKey) }
+    var tempModel by remember { mutableStateOf(modelName) }
     
     val listState = rememberLazyListState()
     LaunchedEffect(msgs.size) { if (msgs.isNotEmpty()) listState.animateScrollToItem(msgs.size - 1) }
@@ -689,18 +809,30 @@ fun GeminiChatScreen(vm: TaskViewModel, msgs: List<Pair<String, Boolean>>) {
     if (showKeyDialog) {
         AlertDialog(
             onDismissRequest = { showKeyDialog = false },
-            title = { Text("Gemini API Key") },
+            title = { Text("AI Assistant settings") },
             text = {
-                OutlinedTextField(
-                    value = tempKey,
-                    onValueChange = { tempKey = it },
-                    label = { Text("Enter Google AI Studio Key") },
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Column {
+                    OutlinedTextField(
+                        value = tempKey,
+                        onValueChange = { tempKey = it },
+                        label = { Text("API key") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = tempModel,
+                        onValueChange = { tempModel = it },
+                        label = { Text("Model name") },
+                        placeholder = { Text("gemini-2.0-flash") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                }
             },
             confirmButton = {
                 Button(onClick = {
-                    vm.updateGeminiApiKey(tempKey)
+                    vm.updateGeminiSettings(tempKey, tempModel)
                     showKeyDialog = false
                 }) { Text("Save") }
             },
@@ -708,11 +840,24 @@ fun GeminiChatScreen(vm: TaskViewModel, msgs: List<Pair<String, Boolean>>) {
         )
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp).imePadding().navigationBarsPadding()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Chat with BeakAI Mentor", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            IconButton(onClick = { showKeyDialog = true }) {
-                Icon(Icons.Default.Settings, "API Key Settings", tint = Color.Gray)
+            Column(Modifier.weight(1f)) {
+                Text("Chat with BeakAI Mentor", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (modelName.isBlank()) "Model not set" else modelName,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
+            FilledTonalButton(onClick = {
+                tempKey = apiKey
+                tempModel = modelName
+                showKeyDialog = true
+            }) {
+                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("API & model")
             }
         }
         
@@ -721,14 +866,17 @@ fun GeminiChatScreen(vm: TaskViewModel, msgs: List<Pair<String, Boolean>>) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.VpnKey, null, modifier = Modifier.size(48.dp), tint = Color.LightGray)
                     Text("API Key Required", fontWeight = FontWeight.Bold)
-                    Text("Tap the settings icon above to set your key.", textAlign = TextAlign.Center, color = Color.Gray)
+                    Text("Use API & model above to set your key and model name.", textAlign = TextAlign.Center, color = Color.Gray)
                 }
             }
         } else {
             LazyColumn(Modifier.weight(1f), state = listState) { items(msgs) { (m, user) -> ChatBubble(m, user) } }
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp)
+        ) {
             OutlinedTextField(
                 value = text, 
                 onValueChange = { text = it }, 
@@ -737,18 +885,16 @@ fun GeminiChatScreen(vm: TaskViewModel, msgs: List<Pair<String, Boolean>>) {
                 placeholder = { Text("Ask for a technical solution...") },
                 enabled = apiKey.isNotBlank()
             )
-            // MANDATORY PROMINENT SEND BUTTON
-            FilledIconButton(
-                onClick = { if(text.isNotBlank()) { vm.askGemini(text); text = "" } }, 
+            Button(
+                onClick = { if (text.isNotBlank()) { vm.askGemini(text); text = "" } },
                 enabled = apiKey.isNotBlank() && text.isNotBlank(),
-                modifier = Modifier.padding(start = 8.dp).size(48.dp),
-                colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFFF9800))
-            ) { 
-                Icon(
-                    Icons.AutoMirrored.Filled.Send, 
-                    null, 
-                    tint = Color.White
-                )
+                modifier = Modifier.padding(start = 8.dp).height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = Color.White)
+                Spacer(Modifier.width(6.dp))
+                Text("Send", color = Color.White, fontWeight = FontWeight.Bold)
             }
         }
     }

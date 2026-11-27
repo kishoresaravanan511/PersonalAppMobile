@@ -30,9 +30,15 @@ class TaskViewModel(private val repository: TaskRepository, private val sessionM
     private val _geminiApiKey = MutableStateFlow(sessionManager.getGeminiApiKey() ?: "")
     val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
 
-    fun updateGeminiApiKey(key: String) {
+    private val _geminiModelName = MutableStateFlow(sessionManager.getGeminiModelName() ?: "gemini-2.0-flash")
+    val geminiModelName: StateFlow<String> = _geminiModelName.asStateFlow()
+
+    fun updateGeminiSettings(key: String, modelName: String) {
+        val resolvedModel = modelName.ifBlank { "gemini-2.0-flash" }
         sessionManager.saveGeminiApiKey(key)
+        sessionManager.saveGeminiModelName(resolvedModel)
         _geminiApiKey.value = key
+        _geminiModelName.value = resolvedModel
     }
 
     suspend fun registerUser(email: String, password: String): Result<Unit> {
@@ -52,6 +58,7 @@ class TaskViewModel(private val repository: TaskRepository, private val sessionM
     fun addTask(
         title: String,
         description: String,
+        aiAssistance: String = "",
         priority: Int,
         frequency: TaskFrequency,
         category: TaskCategory,
@@ -67,6 +74,7 @@ class TaskViewModel(private val repository: TaskRepository, private val sessionM
             val task = Task(
                 title = title,
                 description = description,
+                aiAssistance = aiAssistance,
                 priority = priority,
                 frequency = frequency,
                 category = category,
@@ -99,6 +107,7 @@ class TaskViewModel(private val repository: TaskRepository, private val sessionM
     }
 
     fun setTaskCompletion(task: Task, completed: Boolean) {
+        if (task.status != TaskStatus.ACTIVE) return
         viewModelScope.launch {
             val now = System.currentTimeMillis()
             val updatedTask = task.copy(
@@ -112,8 +121,20 @@ class TaskViewModel(private val repository: TaskRepository, private val sessionM
     }
 
     fun deleteTask(task: Task) {
+        if (task.status != TaskStatus.ACTIVE) return
         viewModelScope.launch {
             repository.delete(task)
+        }
+    }
+
+    fun requestTaskAssistance(name: String, description: String, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val response = geminiService.getTechChatResponse(
+                _geminiApiKey.value,
+                _geminiModelName.value,
+                "Give a short, practical assistance plan for this scheduled item.\nName: $name\nDescription: $description"
+            )
+            onResult(response)
         }
     }
 
@@ -138,7 +159,7 @@ class TaskViewModel(private val repository: TaskRepository, private val sessionM
             currentMessages.add(prompt to true)
             _chatMessages.value = currentMessages
             
-            val response = geminiService.getTechChatResponse(apiKey, prompt)
+            val response = geminiService.getTechChatResponse(apiKey, _geminiModelName.value, prompt)
             repository.logChatPrompt(prompt, response)
             
             val updatedMessages = _chatMessages.value.toMutableList()

@@ -15,8 +15,11 @@ class SessionManager(context: Context) {
     }
 
     fun logout() {
-        prefs.edit().remove("user_email").apply()
-        prefs.edit().remove("gemini_api_key").apply()
+        prefs.edit()
+            .remove("user_email")
+            .remove("gemini_api_key")
+            .remove("gemini_model_name")
+            .apply()
     }
 
     fun saveTheme(isDark: Boolean) {
@@ -33,5 +36,13 @@ class SessionManager(context: Context) {
 
     fun getGeminiApiKey(): String? {
         return prefs.getString("gemini_api_key", null)
+    }
+
+    fun saveGeminiModelName(modelName: String) {
+        prefs.edit().putString("gemini_model_name", modelName).apply()
+    }
+
+    fun getGeminiModelName(): String? {
+        return prefs.getString("gemini_model_name", null)
     }
 }

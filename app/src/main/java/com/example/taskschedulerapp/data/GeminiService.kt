@@ -14,14 +14,14 @@ class GeminiService {
     
     private var model: GenerativeModel? = null
     private var currentApiKey: String = ""
+    private var currentModelName: String = ""
 
     /**
-     * Re-initializes the model if the API key has changed.
-     * Sets the Technical Mentor persona with specific instructions for solution generation.
-     * Updated to Gemini 2.0 Flash as per user requirement.
+     * Re-initializes the model when the API key or model name changes.
      */
-    private fun initializeModel(apiKey: String) {
-        if (apiKey == currentApiKey && model != null) return
+    private fun initializeModel(apiKey: String, modelName: String) {
+        val resolvedModel = modelName.ifBlank { "gemini-2.0-flash" }
+        if (apiKey == currentApiKey && resolvedModel == currentModelName && model != null) return
         
         try {
             if (apiKey.isNotBlank()) {
@@ -33,7 +33,7 @@ class GeminiService {
                 }
 
                 model = GenerativeModel(
-                    modelName = "gemini-2.0-flash",
+                    modelName = resolvedModel,
                     apiKey = apiKey,
                     generationConfig = config,
                     systemInstruction = content {
@@ -41,9 +41,11 @@ class GeminiService {
                     }
                 )
                 currentApiKey = apiKey
+                currentModelName = resolvedModel
             } else {
                 model = null
                 currentApiKey = ""
+                currentModelName = ""
             }
         } catch (e: Exception) {
             Log.e("GeminiService", "Failed to initialize GenerativeModel: ${e.message}")
@@ -54,8 +56,8 @@ class GeminiService {
     /**
      * Fetches a daily interview question using the provided API key.
      */
-    suspend fun getDailyInterviewQuestion(apiKey: String): String {
-        initializeModel(apiKey)
+    suspend fun getDailyInterviewQuestion(apiKey: String, modelName: String = "gemini-2.0-flash"): String {
+        initializeModel(apiKey, modelName)
         val currentModel = model
         if (currentModel == null) {
             return "BeakAI Info: API Key missing or invalid. Please provide your key in the AI Assistant settings."
@@ -74,8 +76,8 @@ class GeminiService {
     /**
      * Generates solutions based on user's query using the provided dynamic API key.
      */
-    suspend fun getTechChatResponse(apiKey: String, userPrompt: String): String {
-        initializeModel(apiKey)
+    suspend fun getTechChatResponse(apiKey: String, modelName: String, userPrompt: String): String {
+        initializeModel(apiKey, modelName)
         val currentModel = model
         if (currentModel == null) {
             return "BeakAI Chat: I need an API key to process your query. Please provide it in the AI Assistant settings."
