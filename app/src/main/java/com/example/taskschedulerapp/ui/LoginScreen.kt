@@ -56,7 +56,7 @@ fun LoginScreen(
         AlertDialog(
             onDismissRequest = { showExitConfirm = false },
             title = { Text("Exit BeakAI") },
-            text = { Text("Do you want to close the application?") },
+            text = { Text("Do you want to close BeakAI?") },
             confirmButton = { 
                 Button(onClick = { (context as? Activity)?.finish() }) { Text("Exit") } 
             },
@@ -109,7 +109,7 @@ fun LoginScreen(
                 value = email,
                 onValueChange = { email = it },
                 label = { Text("Email ID", color = Color.Gray) },
-                placeholder = { Text("user@beakai.app") },
+                placeholder = { Text("username@beakai.app") },
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = { Icon(Icons.Default.Email, null, tint = Color.White) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),

@@ -13,39 +13,35 @@ import java.util.*
 class AlarmScheduler(private val context: Context) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-    fun scheduleAlarm(task: Task) {
-        if (task.isCompleted) return
+    fun scheduleAlarm(task: Task): Long {
+        // Only skip scheduling for completed one-time tasks.
+        if (task.frequency == TaskFrequency.ONCE && task.isCompleted) return 0L
 
         val now = Calendar.getInstance()
         val calendar = Calendar.getInstance().apply {
-            if (task.scheduledTimestamp > 0) {
-                timeInMillis = task.scheduledTimestamp
-            } else {
-                set(Calendar.HOUR_OF_DAY, task.hour)
-                set(Calendar.MINUTE, task.minute)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
+            // Source of truth for time components
+            set(Calendar.HOUR_OF_DAY, task.hour)
+            set(Calendar.MINUTE, task.minute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
 
-                when (task.frequency) {
-                    TaskFrequency.ONCE -> {
-                        task.year?.let { set(Calendar.YEAR, it) }
-                        task.month?.let { set(Calendar.MONTH, it) }
-                        task.dayOfMonth?.let { set(Calendar.DAY_OF_MONTH, it) }
-                    }
-                    TaskFrequency.WEEKLY -> task.dayOfWeek?.let { set(Calendar.DAY_OF_WEEK, it) }
-                    TaskFrequency.MONTHLY -> task.dayOfMonth?.let { set(Calendar.DAY_OF_MONTH, it) }
-                    else -> {}
-                }
+            // Start date components
+            task.year?.let { set(Calendar.YEAR, it) }
+            task.month?.let { set(Calendar.MONTH, it) }
+            task.dayOfMonth?.let { set(Calendar.DAY_OF_MONTH, it) }
+
+            if (task.frequency == TaskFrequency.WEEKLY) {
+                task.dayOfWeek?.let { set(Calendar.DAY_OF_WEEK, it) }
             }
         }
 
-        // Move to the next valid occurrence for repeating tasks
+        // For repeating tasks, if the time is in the past, find the next occurrence in the future
         if (calendar.before(now)) {
             if (task.frequency == TaskFrequency.ONCE) {
                 Log.d("AlarmScheduler", "Skipping past ONCE task: ${task.title}")
-                return
+                return 0L
             } else {
-                // For repeating tasks, find the next occurrence in the future
+                // Find next valid occurrence
                 while (calendar.before(now)) {
                     when (task.frequency) {
                         TaskFrequency.DAILY -> calendar.add(Calendar.DATE, 1)
@@ -75,24 +71,23 @@ class AlarmScheduler(private val context: Context) {
                 if (alarmManager.canScheduleExactAlarms()) {
                     val alarmClockInfo = AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent)
                     alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
-                    Log.d("AlarmScheduler", "Scheduled Accurate Alarm for ${task.title}")
+                    Log.d("AlarmScheduler", "Scheduled Accurate Alarm for ${task.title} at ${calendar.time}")
                 } else {
-                    // Fallback to inexact alarm if permission not granted
                     alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
-                    Log.d("AlarmScheduler", "Scheduled Inexact Alarm (No Permission) for ${task.title}")
+                    Log.d("AlarmScheduler", "Scheduled Inexact Alarm for ${task.title} at ${calendar.time}")
                 }
             } else {
                 val alarmClockInfo = AlarmManager.AlarmClockInfo(calendar.timeInMillis, pendingIntent)
                 alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
             }
         } catch (e: Exception) {
-            // Ultimate fallback
             try {
                 alarmManager.set(AlarmManager.RTC_WAKEUP, calendar.timeInMillis, pendingIntent)
             } catch (e2: Exception) {
                 Log.e("AlarmScheduler", "Failed to schedule alarm: ${e2.message}")
             }
         }
+        return calendar.timeInMillis
     }
 
     fun cancelAlarm(task: Task) {

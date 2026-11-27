@@ -9,6 +9,7 @@ import androidx.core.app.NotificationCompat
 import com.example.taskschedulerapp.data.AppDatabase
 import com.example.taskschedulerapp.data.GeminiService
 import com.example.taskschedulerapp.data.Question
+import com.example.taskschedulerapp.data.SessionManager
 import com.example.taskschedulerapp.data.TaskRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,10 +21,16 @@ class DailyQuestionReceiver : BroadcastReceiver() {
         val database = AppDatabase.getDatabase(context)
         val repository = TaskRepository(database.taskDao(), context)
         val geminiService = GeminiService()
+        val sessionManager = SessionManager(context)
+        val apiKey = sessionManager.getGeminiApiKey() ?: ""
         
+        if (apiKey.isBlank()) return
+
         CoroutineScope(Dispatchers.IO).launch {
-            val questionAndAnswer = geminiService.getDailyInterviewQuestion()
+            val questionAndAnswer = geminiService.getDailyInterviewQuestion(apiKey)
             
+            if (questionAndAnswer.startsWith("BeakAI Info:")) return@launch
+
             // Parse Q&A (Simple split for demo, usually Gemini returns structured text)
             val parts = questionAndAnswer.split("Answer:", ignoreCase = true)
             val qText = parts.getOrNull(0)?.replace("Question:", "", true)?.trim() ?: "Daily Topic"

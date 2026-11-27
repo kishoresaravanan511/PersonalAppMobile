@@ -16,6 +16,7 @@ class SessionManager(context: Context) {
 
     fun logout() {
         prefs.edit().remove("user_email").apply()
+        prefs.edit().remove("gemini_api_key").apply()
     }
 
     fun saveTheme(isDark: Boolean) {
@@ -24,5 +25,13 @@ class SessionManager(context: Context) {
 
     fun isDarkTheme(): Boolean {
         return prefs.getBoolean("is_dark_theme", false)
+    }
+
+    fun saveGeminiApiKey(apiKey: String) {
+        prefs.edit().putString("gemini_api_key", apiKey).apply()
+    }
+
+    fun getGeminiApiKey(): String? {
+        return prefs.getString("gemini_api_key", null)
     }
 }

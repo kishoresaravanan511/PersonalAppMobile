@@ -29,7 +29,6 @@ class TaskRepository(private val taskDao: TaskDao, private val context: Context)
     private var lastTasksRef: DatabaseReference? = null
     private var lastDsaRef: DatabaseReference? = null
 
-    // Track state using simple properties instead of RestrictedApi calls
     private var currentSanitizedEmail: String? = null
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
@@ -71,7 +70,6 @@ class TaskRepository(private val taskDao: TaskDao, private val context: Context)
                 checkConnection()
                 listenToQuestionChanges()
                 
-                // Re-trigger user setup if email was already known
                 currentUserEmailFlow.value?.let { setUserEmail(it) }
             } catch (e: Exception) {
                 Log.e("TaskRepo", "Firebase Init Error: ${e.message}")
@@ -83,14 +81,12 @@ class TaskRepository(private val taskDao: TaskDao, private val context: Context)
         val emailLower = email.lowercase().trim()
         val sanitizedEmail = emailLower.replace(".", "_").replace("@", "_")
 
-        // Update the flow immediately so Room data starts loading
         if (currentUserEmailFlow.value != emailLower) {
             currentUserEmailFlow.value = emailLower
         }
         
         val db = database ?: return
         
-        // Prevent redundant listener setup if same user
         if (currentSanitizedEmail == sanitizedEmail && tasksListener != null) return
         
         currentSanitizedEmail = sanitizedEmail
@@ -292,18 +288,23 @@ class TaskRepository(private val taskDao: TaskDao, private val context: Context)
         val now = System.currentTimeMillis()
         val timestampedTask = task.copy(lastUpdated = now, createdAt = now, userEmail = email)
         val id = taskDao.insertTask(timestampedTask)
-        val taskWithId = timestampedTask.copy(id = id.toInt())
+        
+        val scheduledTime = alarmScheduler.scheduleAlarm(timestampedTask.copy(id = id.toInt()))
+        val taskWithScheduled = timestampedTask.copy(id = id.toInt(), scheduledTimestamp = scheduledTime)
         
         tasksRef?.let {
             val firebaseRef = it.push()
-            val finalTask = taskWithId.copy(firebaseId = firebaseRef.key)
+            val finalTask = taskWithScheduled.copy(firebaseId = firebaseRef.key)
             firebaseRef.setValue(finalTask)
             syncMutex.withLock {
                 taskDao.updateTask(finalTask)
             }
+        } ?: run {
+            syncMutex.withLock {
+                taskDao.updateTask(taskWithScheduled)
+            }
         }
         
-        alarmScheduler.scheduleAlarm(taskWithId)
         return id
     }
 
@@ -321,12 +322,17 @@ class TaskRepository(private val taskDao: TaskDao, private val context: Context)
     suspend fun update(task: Task) {
         val email = currentUserEmailFlow.value ?: ""
         val updatedTask = task.copy(lastUpdated = System.currentTimeMillis(), userEmail = email)
+        
+        val scheduledTime = if (!updatedTask.isCompleted) alarmScheduler.scheduleAlarm(updatedTask) else 0L
+        val taskWithScheduled = updatedTask.copy(scheduledTimestamp = scheduledTime)
+
         syncMutex.withLock {
-            taskDao.updateTask(updatedTask)
+            taskDao.updateTask(taskWithScheduled)
         }
-        if (!updatedTask.isCompleted) alarmScheduler.scheduleAlarm(updatedTask)
-        else alarmScheduler.cancelAlarm(updatedTask)
-        updatedTask.firebaseId?.let { tasksRef?.child(it)?.setValue(updatedTask) }
+        
+        if (taskWithScheduled.isCompleted) alarmScheduler.cancelAlarm(taskWithScheduled)
+        
+        taskWithScheduled.firebaseId?.let { tasksRef?.child(it)?.setValue(taskWithScheduled) }
     }
 
     suspend fun delete(task: Task) {

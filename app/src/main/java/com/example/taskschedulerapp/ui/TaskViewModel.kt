@@ -1,6 +1,5 @@
 package com.example.taskschedulerapp.ui
 
-import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -12,7 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
+class TaskViewModel(private val repository: TaskRepository, private val sessionManager: SessionManager) : ViewModel() {
 
     private val geminiService = GeminiService()
 
@@ -28,6 +27,14 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
     private val _chatMessages = MutableStateFlow<List<Pair<String, Boolean>>>(emptyList())
     val chatMessages: StateFlow<List<Pair<String, Boolean>>> = _chatMessages.asStateFlow()
 
+    private val _geminiApiKey = MutableStateFlow(sessionManager.getGeminiApiKey() ?: "")
+    val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
+
+    fun updateGeminiApiKey(key: String) {
+        sessionManager.saveGeminiApiKey(key)
+        _geminiApiKey.value = key
+    }
+
     suspend fun registerUser(email: String, password: String): Result<Unit> {
         return repository.registerUser(email, password)
     }
@@ -36,8 +43,13 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
         return repository.authenticateUser(email, password)
     }
 
+    fun addTask(task: Task) {
+        viewModelScope.launch {
+            repository.insert(task)
+        }
+    }
+
     fun addTask(
-        context: Context,
         title: String,
         description: String,
         priority: Int,
@@ -72,6 +84,20 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
         }
     }
 
+    fun toggleTaskCompletion(taskId: Int, completed: Boolean) {
+        viewModelScope.launch {
+            val task = tasks.value.find { it.id == taskId } ?: return@launch
+            val now = System.currentTimeMillis()
+            val updatedTask = task.copy(
+                isCompleted = completed,
+                status = if (completed) TaskStatus.ACHIEVED else TaskStatus.ACTIVE,
+                lastCompletedTimestamp = if (completed) now else task.lastCompletedTimestamp,
+                lastUpdated = now
+            )
+            repository.update(updatedTask)
+        }
+    }
+
     fun setTaskCompletion(task: Task, completed: Boolean) {
         viewModelScope.launch {
             val now = System.currentTimeMillis()
@@ -85,7 +111,7 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
         }
     }
 
-    fun deleteTask(context: Context, task: Task) {
+    fun deleteTask(task: Task) {
         viewModelScope.launch {
             repository.delete(task)
         }
@@ -96,6 +122,7 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
             val current = dsaPatterns.value.find { it.id == id }
             val updated = DsaPattern(
                 id = id,
+                userEmail = "",
                 category = category,
                 patternName = patternName,
                 isCompleted = !(current?.isCompleted ?: false)
@@ -106,11 +133,12 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
 
     fun askGemini(prompt: String) {
         viewModelScope.launch {
+            val apiKey = _geminiApiKey.value
             val currentMessages = _chatMessages.value.toMutableList()
             currentMessages.add(prompt to true)
             _chatMessages.value = currentMessages
             
-            val response = geminiService.getTechChatResponse(prompt)
+            val response = geminiService.getTechChatResponse(apiKey, prompt)
             repository.logChatPrompt(prompt, response)
             
             val updatedMessages = _chatMessages.value.toMutableList()
@@ -120,11 +148,11 @@ class TaskViewModel(private val repository: TaskRepository) : ViewModel() {
     }
 }
 
-class TaskViewModelFactory(private val repository: TaskRepository) : ViewModelProvider.Factory {
+class TaskViewModelFactory(private val repository: TaskRepository, private val sessionManager: SessionManager) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(TaskViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return TaskViewModel(repository) as T
+            return TaskViewModel(repository, sessionManager) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

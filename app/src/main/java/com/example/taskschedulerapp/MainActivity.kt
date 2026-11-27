@@ -33,7 +33,7 @@ class MainActivity : FragmentActivity() {
         val sessionManager = SessionManager(applicationContext)
         val database = AppDatabase.getDatabase(applicationContext)
         val repository = TaskRepository(database.taskDao(), applicationContext)
-        val factory = TaskViewModelFactory(repository)
+        val factory = TaskViewModelFactory(repository, sessionManager)
         
         DailyQuestionReceiver.scheduleDailyNotification(applicationContext)
         
